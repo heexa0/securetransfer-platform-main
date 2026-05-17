@@ -1,39 +1,38 @@
-#  Module ING2 — Gestion des Utilisateurs (Users)
-**Projet SecureTransfer — Branche : `feature/ing2-users`**
-
-> Ce module gère la création, l'authentification et la gestion des profils utilisateurs (Particuliers, Agences, Entreprises). Il s'appuie sur le module ING1 (Auth/JWT) et expose ses services aux modules ING3, ING4 et ING6.
+# Module ING2 — Gestion des Utilisateurs
+**Projet SecureTransfer **
 
 ---
 
-## Auteur
-- **Module** : ING2 — User Management
-- **Dépend de** : ING1 (Auth, JWT, SecurityConfig)
-- **Expose vers** : ING3 (Transferts), ING4 (KYC), ING6 (Notifications)
+## Informations générales
+
+| Champ | Valeur |
+|-------|--------|
+| Module | ING2 — User Management |
+| Dépend de | ING1 (Auth, JWT, SecurityConfig) |
+| Expose vers | ING3 (Transferts), ING4 (KYC), ING6 (Notifications) |
+| Dernière mise à jour | Mai 2026 |
 
 ---
 
-##  Table des matières
+## Table des matières
 
-1. [Architecture du module](#1-architecture-du-module)
-2. [Prérequis et installation](#2-prérequis-et-installation)
-3. [Configuration](#3-configuration)
-4. [Structure des packages](#4-structure-des-packages)
-5. [Entités JPA](#5-entités-jpa)
-6. [DTOs](#6-dtos)
-7. [Repositories](#7-repositories)
-8. [UserMapper (MapStruct)](#8-usermapper-mapstruct)
-9. [UserService — API interne](#9-userservice--api-interne)
-10. [UserController — API REST](#10-usercontroller--api-rest)
-11. [Sécurité](#11-sécurité)
-12. [Migration SQL (Flyway)](#12-migration-sql-flyway)
-13. [Tests](#13-tests)
-14. [Validation des endpoints](#14-validation-des-endpoints)
-15. [Ce que vous exposez aux autres modules](#15-ce-que-vous-exposez-aux-autres-modules)
-16. [Erreurs connues et solutions](#16-erreurs-connues-et-solutions)
+1. [Vue d'ensemble](#1-vue-densemble)
+2. [Ce qui a été implémenté](#2-ce-qui-a-été-implémenté)
+3. [Architecture du module](#3-architecture-du-module)
+4. [Couche Entités](#4-couche-entités)
+5. [Couche DTOs](#5-couche-dtos)
+6. [Couche Repositories](#6-couche-repositories)
+7. [Mapping avec MapStruct](#7-mapping-avec-mapstruct)
+8. [Couche Service](#8-couche-service)
+9. [Couche Controller — API REST](#9-couche-controller--api-rest)
+10. [Sécurité et chiffrement](#10-sécurité-et-chiffrement)
+11. [Migration SQL (Flyway)](#11-migration-sql-flyway)
+12. [Tests](#12-tests)
+13. [Ce que les autres modules consomment](#13-ce-que-les-autres-modules-consomment)
+14. [Erreurs connues et solutions](#14-erreurs-connues-et-solutions)
 
 ---
-
-## 1. Architecture du module
+##  Architecture du module
 
 ```
 com.securetransfer.platform/
@@ -67,908 +66,254 @@ com.securetransfer.platform/
 ```
 
 ---
+## 1. Vue d'ensemble
 
-## 2. Prérequis et installation
+Le module ING2 est responsable de la gestion complète du cycle de vie des utilisateurs de la plateforme SecureTransfer. Il s'appuie sur le module ING1 pour l'authentification et la sécurité, et expose ses services aux modules ING3, ING4 et ING6.
 
-### Versions requises
-| Outil | Version |
-|-------|---------|
-| Java | 21+ |
-| Spring Boot | 3.5.x |
-| PostgreSQL | 16.x |
-| Redis | 7.x |
-| Maven | 3.9+ |
+Trois types de profils utilisateurs sont supportés, chacun avec ses propres attributs métier :
+- **Particulier** : personne physique, identifiée par son CIN et sa date de naissance
+- **Agence** : structure disposant d'un code agence unique et d'une adresse
+- **Entreprise** : personne morale identifiée par son SIRET et sa raison sociale
 
-### Dépendances ajoutées au `pom.xml`
-
-> ⚠️ Ces dépendances **n'étaient pas dans le projet ING1** — elles ont été ajoutées pour ING2.
-
-```xml
-<!-- Dans <dependencies> -->
-<dependency>
-    <groupId>org.mapstruct</groupId>
-    <artifactId>mapstruct</artifactId>
-    <version>1.6.3</version>
-</dependency>
-
-<!-- Dans <annotationProcessorPaths> de maven-compiler-plugin -->
-<!-- (pour les deux executions : default-compile ET default-testCompile) -->
-<path>
-    <groupId>org.mapstruct</groupId>
-    <artifactId>mapstruct-processor</artifactId>
-    <version>1.6.3</version>
-</path>
-<path>
-    <groupId>org.projectlombok</groupId>
-    <artifactId>lombok-mapstruct-binding</artifactId>
-    <version>0.2.0</version>
-</path>
-```
-
-> **Pourquoi ?** MapStruct génère automatiquement le code de conversion Entité ↔ DTO à la compilation. Le `lombok-mapstruct-binding` évite les conflits entre Lombok et MapStruct.
-
-### Lancer le projet
-
-```bash
-# 1. Démarrer Docker (PostgreSQL + Redis)
-docker-compose up -d
-
-# 2. Vérifier que les conteneurs tournent
-docker ps
-# Doit afficher 2 conteneurs : postgres et redis
-
-# 3. Lancer l'application dans IntelliJ
-# Cliquer sur ▶️ à côté de PlatformApplication.main()
-
-# 4. Vérifier dans les logs :
-# Tomcat started on port 8080
-# Started PlatformApplication in X seconds
-```
+Tous partagent des attributs communs : email, téléphone, statut KYC, limites de transaction, rôles, et timestamps d'audit.
 
 ---
 
-## 3. Configuration
+## 2. Ce qui a été implémenté
 
-### `application.yml` — Ajout ING2
+### Gestion des profils
+- Création de comptes Particulier, Agence et Entreprise avec validation des champs à l'entrée
+- Récupération d'un profil par identifiant ou par email
+- Mise à jour des informations de contact
+- Listing paginé des utilisateurs avec filtre optionnel par statut KYC
 
-```yaml
-# Ajouter à la FIN du fichier application.yml
-# IMPORTANT : encryption: doit être au niveau racine (pas indenté sous jwt:)
+### Gestion des rôles et permissions
+- Quatre rôles initiaux insérés en base : `ROLE_USER`, `ROLE_ADMIN`, `ROLE_AGENCE`, `ROLE_ENTREPRISE`
+- Attribution automatique de `ROLE_USER` à chaque nouveau Particulier
+- Système de permissions granulaires (ex : `TRANSFER_CREATE`, `KYC_UPDATE`) associées aux rôles via une table de jointure
 
-jwt:
-  secret: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970
-  expiration: 900000
-  refresh-expiration: 604800000
+### Statut KYC
+- Chaque utilisateur démarre avec le statut `PENDING`
+- L'administrateur peut passer le statut à `VERIFIED` ou `REJECTED` via un endpoint dédié
+- Le statut KYC est exposé aux autres modules via `UserResponse`
 
-encryption:           # ← au même niveau que jwt:, PAS en dessous
-  key: 12345678901234567890123456789012   # 32 caractères exactement (AES-256)
-```
+### Limites de transaction
+- Chaque profil Particulier est créé avec des limites par défaut (10 000 quotidien / 2 000 unitaire)
+- Une méthode de validation des limites est exposée au module ING3 avant tout transfert
 
-> ⚠️ **Erreur fréquente** : Si `encryption:` est indenté sous `jwt:`, Spring Boot ne trouve pas la clé et l'application crashe au démarrage avec `Could not resolve placeholder 'encryption.key'`.
-
-### `.gitignore`
-
-```
-# Ajouter si un fichier .env est utilisé
-.env
-```
-
----
-
-## 4. Structure des packages
-
-### Comment créer les packages dans IntelliJ
-
-**Clic droit sur `com.securetransfer.platform`** → New → Package
-
-| Package à créer | Contenu |
-|---|---|
-| `user.entity` | Entités JPA |
-| `user.repository` | Interfaces Spring Data JPA |
-| `user.dto` | Records Java (requêtes/réponses) |
-| `user.mapper` | Interface MapStruct |
-| `user.service` | Logique métier |
-| `user.controller` | Endpoints REST |
-| `common.util` | Utilitaires (chiffrement) |
-| `common.exception` | Exceptions personnalisées |
+### Sécurité des données sensibles
+- Un convertisseur JPA chiffre et déchiffre automatiquement les champs sensibles en base via AES-256
+- La clé de chiffrement est configurée dans `application.yml` et ne doit jamais être versionnée
 
 ---
 
-## 5. Entités JPA
+## 3. Architecture du module
 
-### `KycStatus.java` — Enum
+Le module est organisé en deux branches de packages sous `com.securetransfer.platform` :
 
-```java
-package com.securetransfer.platform.user.entity;
+### Branche `user/`
+Contient toute la logique métier liée aux utilisateurs, divisée en six couches : entité, repository, DTO, mapper, service et controller.
 
-public enum KycStatus {
-    PENDING,    // En attente de vérification
-    VERIFIED,   // KYC validé
-    REJECTED    // KYC rejeté
-}
-```
+### Branche `common/`
+Contient les utilitaires transversaux partagés par le module :
+- `EncryptedStringConverter` : chiffrement AES-256 transparent pour JPA
+- `BusinessException` : exception métier avec message explicite
+- `ResourceNotFoundException` : exception pour les ressources introuvables (retourne HTTP 404)
 
-### `Role.java`
-
-```java
-package com.securetransfer.platform.user.entity;
-
-import jakarta.persistence.*;
-import lombok.*;
-import java.util.HashSet;
-import java.util.Set;
-
-@Entity
-@Table(name = "roles")
-@Getter @Setter
-@NoArgsConstructor
-public class Role {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-
-    @Column(unique = true, nullable = false)
-    private String name; // ex: "ROLE_USER", "ROLE_ADMIN", "ROLE_AGENCE"
-
-    @ManyToMany(fetch = FetchType.EAGER)
-    @JoinTable(name = "role_permissions",
-        joinColumns = @JoinColumn(name = "role_id"),
-        inverseJoinColumns = @JoinColumn(name = "permission_id"))
-    private Set<Permission> permissions = new HashSet<>();
-}
-```
-
-### `Permission.java`
-
-```java
-package com.securetransfer.platform.user.entity;
-
-import jakarta.persistence.*;
-import lombok.*;
-
-@Entity
-@Table(name = "permissions")
-@Getter @Setter
-@NoArgsConstructor
-public class Permission {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-
-    @Column(unique = true, nullable = false)
-    private String name; // ex: "TRANSFER_CREATE", "KYC_UPDATE"
-}
-```
-
-### `BaseUser.java` — Classe mère abstraite
-
-```java
-package com.securetransfer.platform.user.entity;
-
-import jakarta.persistence.*;
-import lombok.*;
-import org.springframework.data.annotation.CreatedDate;
-import org.springframework.data.annotation.LastModifiedDate;
-import org.springframework.data.jpa.domain.support.AuditingEntityListener;
-import java.time.LocalDateTime;
-import java.util.HashSet;
-import java.util.Set;
-
-@MappedSuperclass
-@EntityListeners(AuditingEntityListener.class)
-@Getter @Setter
-public abstract class BaseUser {
-
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-
-    @Column(unique = true, nullable = false)
-    private String email;
-
-    @Column(name = "phone_number")
-    private String phoneNumber;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "kyc_status", nullable = false)
-    private KycStatus kycStatus = KycStatus.PENDING;
-
-    @Column(name = "daily_transaction_limit", precision = 15, scale = 2)
-    private java.math.BigDecimal dailyTransactionLimit;
-
-    @Column(name = "single_transaction_limit", precision = 15, scale = 2)
-    private java.math.BigDecimal singleTransactionLimit;
-
-    @ManyToMany(fetch = FetchType.EAGER)
-    @JoinTable(name = "user_roles",
-        joinColumns = @JoinColumn(name = "user_id"),
-        inverseJoinColumns = @JoinColumn(name = "role_id"))
-    private Set<Role> roles = new HashSet<>();
-
-    @Version
-    private Long version;
-
-    @CreatedDate
-    @Column(name = "created_at", updatable = false)
-    private LocalDateTime createdAt;
-
-    @LastModifiedDate
-    @Column(name = "updated_at")
-    private LocalDateTime updatedAt;
-}
-```
-
-### `Particulier.java`
-
-```java
-package com.securetransfer.platform.user.entity;
-
-import jakarta.persistence.*;
-import lombok.*;
-import java.time.LocalDate;
-
-@Entity
-@Table(name = "particuliers")
-@Getter @Setter
-@NoArgsConstructor
-public class Particulier extends BaseUser {
-
-    private String cin;
-
-    @Column(name = "date_of_birth")
-    private LocalDate dateOfBirth;
-
-    private String nationality;
-}
-```
-
-### `Agence.java`
-
-```java
-package com.securetransfer.platform.user.entity;
-
-import jakarta.persistence.*;
-import lombok.*;
-
-@Entity
-@Table(name = "agences")
-@Getter @Setter
-@NoArgsConstructor
-public class Agence extends BaseUser {
-
-    @Column(name = "nom_agence")
-    private String nomAgence;
-
-    @Column(name = "code_agence", unique = true)
-    private String codeAgence;
-
-    private String adresse;
-}
-```
-
-### `Entreprise.java`
-
-```java
-package com.securetransfer.platform.user.entity;
-
-import jakarta.persistence.*;
-import lombok.*;
-
-@Entity
-@Table(name = "entreprises")
-@Getter @Setter
-@NoArgsConstructor
-public class Entreprise extends BaseUser {
-
-    @Column(name = "raison_sociale")
-    private String raisonSociale;
-
-    @Column(unique = true)
-    private String siret;
-
-    private String adresse;
-}
-```
+### Ressources
+Le fichier de migration SQL `V2__users.sql` est placé dans `src/main/resources/db/migration/` et est appliqué automatiquement par Flyway au démarrage.
 
 ---
 
-## 6. DTOs
+## 4. Couche Entités
 
-### `UserResponse.java` — Réponse universelle
+### `KycStatus` (Enum)
+Représente les trois états possibles du processus de vérification d'identité d'un utilisateur : `PENDING`, `VERIFIED`, `REJECTED`.
 
-```java
-package com.securetransfer.platform.user.dto;
+### `Permission`
+Entité JPA représentant une permission fonctionnelle (ex : `TRANSFER_CREATE`). Stockée dans la table `permissions`.
 
-import com.securetransfer.platform.user.entity.KycStatus;
-import java.math.BigDecimal;
-import java.time.LocalDateTime;
+### `Role`
+Entité JPA représentant un rôle utilisateur (ex : `ROLE_ADMIN`). Un rôle possède un ensemble de permissions, chargé eagerly. Stocké dans la table `roles` avec une table de jointure `role_permissions`.
 
-public record UserResponse(
-    Long id,
-    String email,
-    KycStatus kycStatus,
-    BigDecimal dailyTransactionLimit,
-    BigDecimal singleTransactionLimit,
-    LocalDateTime createdAt
-) {}
-```
+### `BaseUser` (classe abstraite)
+Classe mère annotée `@MappedSuperclass` dont héritent les trois types de profils. Elle centralise tous les champs communs :
+- Identifiant auto-généré
+- Email (unique, non null)
+- Numéro de téléphone
+- Statut KYC (valeur par défaut : `PENDING`)
+- Limites de transaction quotidienne et unitaire
+- Ensemble de rôles (relation `@ManyToMany` chargée eagerly)
+- Champ `@Version` pour la gestion optimiste de la concurrence
+- Timestamps `createdAt` et `updatedAt` gérés automatiquement via `@EnableJpaAuditing`
 
-### `CreateParticulierRequest.java`
+### `Particulier`
+Hérite de `BaseUser`. Ajoute le CIN, la date de naissance et la nationalité. Persisté dans la table `particuliers`.
 
-```java
-package com.securetransfer.platform.user.dto;
+### `Agence`
+Hérite de `BaseUser`. Ajoute le nom de l'agence, un code agence unique et une adresse. Persistée dans la table `agences`.
 
-import jakarta.validation.constraints.*;
-
-public record CreateParticulierRequest(
-    @NotBlank @Email String email,
-    @NotBlank @Size(min = 8) String password,
-    String phoneNumber,
-    String cin,
-    String dateOfBirth,
-    String nationality
-) {}
-```
-
-### `CreateAgenceRequest.java`
-
-```java
-package com.securetransfer.platform.user.dto;
-
-import jakarta.validation.constraints.*;
-
-public record CreateAgenceRequest(
-    @NotBlank @Email String email,
-    @NotBlank @Size(min = 8) String password,
-    String phoneNumber,
-    String nomAgence,
-    String codeAgence,
-    String adresse
-) {}
-```
-
-### `CreateEntrepriseRequest.java`
-
-```java
-package com.securetransfer.platform.user.dto;
-
-import jakarta.validation.constraints.*;
-
-public record CreateEntrepriseRequest(
-    @NotBlank @Email String email,
-    @NotBlank @Size(min = 8) String password,
-    String phoneNumber,
-    String raisonSociale,
-    String siret,
-    String adresse
-) {}
-```
-
-### `UpdateUserRequest.java`
-
-```java
-package com.securetransfer.platform.user.dto;
-
-public record UpdateUserRequest(
-    String phoneNumber,
-    String adresse
-) {}
-```
+### `Entreprise`
+Hérite de `BaseUser`. Ajoute la raison sociale, le SIRET (unique) et une adresse. Persistée dans la table `entreprises`.
 
 ---
 
-## 7. Repositories
+## 5. Couche DTOs
 
-```java
-// ParticulierRepository.java
-@Repository
-public interface ParticulierRepository extends JpaRepository<Particulier, Long> {
-    Optional<Particulier> findByEmail(String email);
-    boolean existsByEmail(String email);
+Les DTOs sont implémentés sous forme de **records Java** (immuables, sans boilerplate).
 
-    @Query("""
-        SELECT p FROM Particulier p
-        WHERE (:kycStatus IS NULL OR p.kycStatus = :kycStatus)
-        ORDER BY p.createdAt DESC
-        """)
-    Page<Particulier> findAllFiltered(@Param("kycStatus") KycStatus kycStatus, Pageable pageable);
-}
-```
+### Requêtes de création
+Trois records distincts couvrent la création de chaque type de profil : `CreateParticulierRequest`, `CreateAgenceRequest` et `CreateEntrepriseRequest`. Ils embarquent des contraintes de validation Bean Validation (`@NotBlank`, `@Email`, `@Size`) appliquées automatiquement par Spring avant d'atteindre la couche service.
 
-> **Répéter le même pattern** pour `AgenceRepository` et `EntrepriseRepository` en remplaçant `Particulier` par `Agence` ou `Entreprise`.
+### `UpdateUserRequest`
+Permet la mise à jour partielle d'un profil : numéro de téléphone et adresse uniquement.
 
-```java
-// RoleRepository.java
-@Repository
-public interface RoleRepository extends JpaRepository<Role, Long> {
-    Optional<Role> findByName(String name);
-}
-```
+### `UserResponse`
+Objet de réponse universel retourné par tous les endpoints et méthodes de service. Il expose uniquement les données nécessaires aux consommateurs : `id`, `email`, `kycStatus`, `dailyTransactionLimit`, `singleTransactionLimit` et `createdAt`. Les données internes (mot de passe hashé, version JPA, etc.) ne sont jamais exposées.
 
 ---
 
-## 8. UserMapper (MapStruct)
+## 6. Couche Repositories
 
-```java
-package com.securetransfer.platform.user.mapper;
+Quatre interfaces Spring Data JPA ont été créées :
 
-import com.securetransfer.platform.user.dto.*;
-import com.securetransfer.platform.user.entity.*;
-import org.mapstruct.*;
-
-@Mapper(componentModel = "spring")
-public interface UserMapper {
-
-    UserResponse toResponse(Particulier particulier);
-    UserResponse toResponse(Agence agence);
-    UserResponse toResponse(Entreprise entreprise);
-
-    Particulier toParticulier(CreateParticulierRequest request);
-    Agence toAgence(CreateAgenceRequest request);
-    Entreprise toEntreprise(CreateEntrepriseRequest request);
-
-    void updateParticulierFromRequest(UpdateUserRequest request,
-                                      @MappingTarget Particulier target);
-}
-```
-
-> ⚠️ **Important** : Après avoir créé `UserMapper.java`, faire **Build → Rebuild Project**. MapStruct génère automatiquement `UserMapperImpl.java` dans `target/generated-sources/`.
-
-> ⚠️ **Si IntelliJ ne trouve pas MapStruct** : aller dans **File → Settings → Build → Compiler → Annotation Processors** et cocher **Enable annotation processing**.
+- `ParticulierRepository`, `AgenceRepository`, `EntrepriseRepository` : étendent `JpaRepository` et exposent chacun une méthode `findByEmail`, un `existsByEmail` pour éviter les doublons, et une méthode paginée `findAllFiltered` qui accepte un filtre optionnel par statut KYC via une requête JPQL.
+- `RoleRepository` : permet de retrouver un rôle par son nom (ex : `findByName("ROLE_USER")`).
 
 ---
 
-## 9. UserService — API interne
+## 7. Mapping avec MapStruct
 
-Le `UserService` est **l'interface principale** que les autres modules (ING3, ING4, ING6) vont utiliser.
+`UserMapper` est une interface annotée `@Mapper(componentModel = "spring")` dont l'implémentation est générée automatiquement à la compilation par MapStruct.
 
-```java
-@Service
-@RequiredArgsConstructor
-@Slf4j
-public class UserService {
+Elle gère deux directions de conversion :
+- **Entité → DTO** : trois surcharges de `toResponse()` pour Particulier, Agence et Entreprise, toutes retournant un `UserResponse`
+- **DTO → Entité** : `toParticulier()`, `toAgence()`, `toEntreprise()` à partir des requêtes de création
+- **Mise à jour partielle** : `updateParticulierFromRequest()` avec `@MappingTarget` pour modifier en place une entité existante sans la recréer
 
-    private final ParticulierRepository particulierRepository;
-    private final AgenceRepository agenceRepository;
-    private final EntrepriseRepository entrepriseRepository;
-    private final RoleRepository roleRepository;
-    private final UserMapper userMapper;
-    private final PasswordEncoder passwordEncoder;
-
-    // ── Méthodes disponibles pour les autres modules ──────────────
-
-    public UserResponse createParticulier(CreateParticulierRequest request) { ... }
-    public UserResponse createAgence(CreateAgenceRequest request) { ... }
-    public UserResponse createEntreprise(CreateEntrepriseRequest request) { ... }
-
-    public UserResponse getUser(Long id) { ... }
-    public UserResponse getUserByEmail(String email) { ... }
-
-    public Page<UserResponse> getAllUsers(KycStatus filter, int page, int size) { ... }
-
-    // ← ING3 UTILISE CETTE MÉTHODE
-    public void validateTransactionLimit(Long userId, BigDecimal amount) { ... }
-
-    // ← ING4 UTILISE CETTE MÉTHODE
-    public void updateKycStatus(Long userId, KycStatus newStatus) { ... }
-}
-```
+MapStruct élimine tout le code de mapping manuel répétitif. L'implémentation générée `UserMapperImpl` est visible dans `target/generated-sources/` après un build.
 
 ---
 
-## 10. UserController — API REST
+## 8. Couche Service
 
-### Endpoints disponibles
+`UserService` est le point d'entrée unique pour toute la logique métier du module. Les autres modules interagissent exclusivement avec lui, sans jamais accéder directement aux repositories.
+
+### Création d'utilisateurs
+Lors de la création d'un Particulier, le service vérifie l'absence de doublon email, encode le mot de passe via `PasswordEncoder`, attribue le rôle `ROLE_USER`, définit les limites de transaction par défaut, puis persiste l'entité et retourne un `UserResponse`.
+
+Le même principe s'applique pour les Agences et Entreprises, avec les rôles correspondants.
+
+### Récupération de profils
+Le service expose `getUser(Long id)` et `getUserByEmail(String email)`, qui lèvent une `ResourceNotFoundException` si l'utilisateur n'existe pas.
+
+### Listing paginé
+`getAllUsers(KycStatus filter, int page, int size)` retourne une page de `UserResponse` avec filtre optionnel sur le statut KYC.
+
+### Validation des limites (pour ING3)
+`validateTransactionLimit(Long userId, BigDecimal amount)` récupère l'utilisateur concerné et lève une `BusinessException` si le montant demandé dépasse sa limite unitaire.
+
+### Mise à jour du statut KYC (pour ING4)
+`updateKycStatus(Long userId, KycStatus newStatus)` met à jour le statut KYC de n'importe quel type d'utilisateur.
+
+---
+
+## 9. Couche Controller — API REST
+
+`UserController` expose six endpoints REST sous le préfixe `/api/users`.
 
 | Méthode | URL | Auth requise | Description |
 |---------|-----|-------------|-------------|
-| `POST` | `/api/users/particuliers` | ❌ Aucune | Créer un particulier |
-| `POST` | `/api/users/agences` | ✅ `ROLE_ADMIN` | Créer une agence |
-| `GET` | `/api/users/me` | ✅ JWT valide | Mon propre profil |
-| `GET` | `/api/users/{id}` | ✅ ADMIN ou propriétaire | Profil par ID |
-| `GET` | `/api/users` | ✅ `ROLE_ADMIN` | Liste paginée |
-| `PATCH` | `/api/users/{id}/kyc` | ✅ `ROLE_ADMIN` | Mettre à jour KYC |
+| `POST` | `/api/users/particuliers` | Aucune | Crée un compte Particulier |
+| `POST` | `/api/users/agences` | `ROLE_ADMIN` | Crée un compte Agence |
+| `GET` | `/api/users/me` | JWT valide | Retourne le profil de l'utilisateur connecté |
+| `GET` | `/api/users/{id}` | ADMIN ou propriétaire | Retourne un profil par ID |
+| `GET` | `/api/users` | `ROLE_ADMIN` | Liste paginée avec filtre KYC optionnel |
+| `PATCH` | `/api/users/{id}/kyc` | `ROLE_ADMIN` | Met à jour le statut KYC |
 
-```java
-@RestController
-@RequestMapping("/api/users")
-@RequiredArgsConstructor
-public class UserController {
+L'endpoint `GET /me` utilise `@AuthenticationPrincipal` pour extraire l'email depuis le contexte de sécurité Spring et délègue à `getUserByEmail()`.
 
-    private final UserService userService;
+L'endpoint `GET /{id}` utilise `@PreAuthorize` avec une expression SpEL qui autorise l'accès soit aux administrateurs, soit au propriétaire du profil via un bean `userSecurity`.
 
-    @PostMapping("/particuliers")
-    public ResponseEntity<UserResponse> createParticulier(
-            @Valid @RequestBody CreateParticulierRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(userService.createParticulier(request));
-    }
+---
 
-    @PostMapping("/agences")
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<UserResponse> createAgence(
-            @Valid @RequestBody CreateAgenceRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(userService.createAgence(request));
-    }
+## 10. Sécurité et chiffrement
 
-    @GetMapping("/me")
-    public ResponseEntity<UserResponse> getMe(
-            @AuthenticationPrincipal UserDetails principal) {
-        return ResponseEntity.ok(userService.getUserByEmail(principal.getUsername()));
-    }
+### Modification de SecurityConfig (ING1)
+La seule modification apportée au module ING1 est l'ajout de l'endpoint `/api/users/particuliers` dans la liste des URLs publiques. Cela permet l'auto-inscription des particuliers sans token JWT. Tous les autres endpoints du module ING2 restent protégés.
 
-    @GetMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN') or @userSecurity.isOwner(authentication, #id)")
-    public ResponseEntity<UserResponse> getUser(@PathVariable Long id) {
-        return ResponseEntity.ok(userService.getUser(id));
-    }
+### Chiffrement AES-256
+`EncryptedStringConverter` implémente `AttributeConverter<String, String>` de JPA. Il intercepte automatiquement les lectures et écritures en base pour les champs annotés avec ce converter. Le chiffrement utilise AES avec une clé de 32 caractères configurée dans `application.yml` sous la clé `encryption.key`. Cette clé doit être au niveau racine du fichier YAML, au même niveau que `jwt:`.
 
-    @GetMapping
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<Page<UserResponse>> getAll(
-            @RequestParam(required = false) KycStatus kycStatus,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
-        return ResponseEntity.ok(userService.getAllUsers(kycStatus, page, size));
-    }
+---
 
-    @PatchMapping("/{id}/kyc")
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<Void> updateKyc(
-            @PathVariable Long id,
-            @RequestParam KycStatus status) {
-        userService.updateKycStatus(id, status);
-        return ResponseEntity.noContent().build();
-    }
-}
+## 11. Migration SQL (Flyway)
+
+Le fichier `V2__users.sql` est appliqué automatiquement par Flyway au démarrage, après la migration V1 d'ING1.
+
+Il crée les tables suivantes :
+- `roles` et `permissions` avec leur table de jointure `role_permissions`
+- `particuliers`, `agences` et `entreprises` avec tous leurs champs métier et d'audit
+- `user_roles` : table de jointure polymorphe reliant les utilisateurs à leurs rôles
+
+Il insère également les quatre rôles initiaux (`ROLE_USER`, `ROLE_ADMIN`, `ROLE_AGENCE`, `ROLE_ENTREPRISE`) avec `ON CONFLICT DO NOTHING` pour rendre la migration idempotente.
+
+Au démarrage de l'application, les logs Flyway confirment l'application avec le message :
+```
+Successfully applied 1 migration to schema "public", now at version v2
 ```
 
 ---
 
-## 11. Sécurité
+## 12. Tests
 
-### Modification de `SecurityConfig.java` (ING1)
+Les tests unitaires se trouvent dans `UserServiceTest.java` et couvrent les cas critiques du service avec Mockito (sans base de données réelle).
 
-> ⚠️ **Ne modifier QUE la liste des endpoints publics** — ne pas toucher au reste.
+| Test | Résultat |
+|------|----------|
+| Création d'un Particulier avec données valides → retourne `UserResponse` | ✅ |
+| Création avec email déjà existant → lève `BusinessException` | ✅ |
+| Validation de transaction avec montant supérieur à la limite → lève `BusinessException` | ✅ |
 
-```java
-// Dans SecurityConfig.java — SEULE MODIFICATION ING2
-.authorizeHttpRequests(auth -> auth
-    .requestMatchers(
-        "/api/v1/auth/register",
-        "/api/v1/auth/login",
-        "/api/v1/auth/mfa/**",
-        "/api/users/particuliers",  // ← AJOUTÉ PAR ING2
-        "/swagger-ui/**",
-        "/v3/api-docs/**"
-    ).permitAll()
-    .anyRequest().authenticated()
-)
-```
-
-### `EncryptedStringConverter.java`
-
-```java
-package com.securetransfer.platform.common.util;
-
-import jakarta.persistence.AttributeConverter;
-import jakarta.persistence.Converter;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
-import javax.crypto.Cipher;
-import javax.crypto.spec.SecretKeySpec;
-import java.util.Base64;
-
-@Converter
-@Component
-public class EncryptedStringConverter implements AttributeConverter<String, String> {
-
-    @Value("${encryption.key}")
-    private String encryptionKey;
-
-    @Override
-    public String convertToDatabaseColumn(String attribute) {
-        if (attribute == null) return null;
-        try {
-            SecretKeySpec key = new SecretKeySpec(encryptionKey.getBytes(), "AES");
-            Cipher cipher = Cipher.getInstance("AES");
-            cipher.init(Cipher.ENCRYPT_MODE, key);
-            return Base64.getEncoder().encodeToString(cipher.doFinal(attribute.getBytes()));
-        } catch (Exception e) {
-            throw new RuntimeException("Erreur chiffrement", e);
-        }
-    }
-
-    @Override
-    public String convertToEntityAttribute(String dbData) {
-        if (dbData == null) return null;
-        try {
-            SecretKeySpec key = new SecretKeySpec(encryptionKey.getBytes(), "AES");
-            Cipher cipher = Cipher.getInstance("AES");
-            cipher.init(Cipher.DECRYPT_MODE, key);
-            return new String(cipher.doFinal(Base64.getDecoder().decode(dbData)));
-        } catch (Exception e) {
-            throw new RuntimeException("Erreur déchiffrement", e);
-        }
-    }
-}
-```
+Les trois tests passent en moins de 2 secondes.
 
 ---
 
-## 12. Migration SQL (Flyway)
+## 13. Ce que les autres modules consomment
 
-Fichier : `src/main/resources/db/migration/V2__users.sql`
+Les modules ING3, ING4 et ING6 injectent uniquement `UserService`. Ils n'ont pas accès aux repositories ni aux entités internes.
 
-```sql
--- Roles et permissions
-CREATE TABLE IF NOT EXISTS roles (
-    id BIGSERIAL PRIMARY KEY,
-    name VARCHAR(50) UNIQUE NOT NULL
-);
+### ING3 — Transferts
+Avant d'exécuter un transfert, ING3 appelle `validateTransactionLimit(userId, montant)`. Si le montant dépasse la limite unitaire de l'utilisateur, une `BusinessException` est levée et le transfert est bloqué.
 
-CREATE TABLE IF NOT EXISTS permissions (
-    id BIGSERIAL PRIMARY KEY,
-    name VARCHAR(100) UNIQUE NOT NULL
-);
+### ING4 — KYC
+Après avoir validé l'identité d'un utilisateur, ING4 appelle `updateKycStatus(userId, KycStatus.VERIFIED)` ou `updateKycStatus(userId, KycStatus.REJECTED)`.
 
-CREATE TABLE IF NOT EXISTS role_permissions (
-    role_id BIGINT REFERENCES roles(id),
-    permission_id BIGINT REFERENCES permissions(id),
-    PRIMARY KEY (role_id, permission_id)
-);
+### ING3, ING4, ING6 — Récupération de profils
+Les trois modules peuvent récupérer un profil via `getUser(id)`, `getUserByEmail(email)`, ou une liste paginée via `getAllUsers(filter, page, size)`. Tous retournent des objets `UserResponse`.
 
--- Particuliers
-CREATE TABLE IF NOT EXISTS particuliers (
-    id BIGSERIAL PRIMARY KEY,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    phone_number VARCHAR(20),
-    kyc_status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
-    daily_transaction_limit DECIMAL(15,2),
-    single_transaction_limit DECIMAL(15,2),
-    cin VARCHAR(20),
-    date_of_birth DATE,
-    nationality VARCHAR(100),
-    version BIGINT DEFAULT 0,
-    created_at TIMESTAMP,
-    updated_at TIMESTAMP
-);
-
--- Agences
-CREATE TABLE IF NOT EXISTS agences (
-    id BIGSERIAL PRIMARY KEY,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    phone_number VARCHAR(20),
-    kyc_status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
-    daily_transaction_limit DECIMAL(15,2),
-    single_transaction_limit DECIMAL(15,2),
-    nom_agence VARCHAR(255),
-    code_agence VARCHAR(50) UNIQUE,
-    adresse TEXT,
-    version BIGINT DEFAULT 0,
-    created_at TIMESTAMP,
-    updated_at TIMESTAMP
-);
-
--- Entreprises
-CREATE TABLE IF NOT EXISTS entreprises (
-    id BIGSERIAL PRIMARY KEY,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    phone_number VARCHAR(20),
-    kyc_status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
-    daily_transaction_limit DECIMAL(15,2),
-    single_transaction_limit DECIMAL(15,2),
-    raison_sociale VARCHAR(255),
-    siret VARCHAR(50) UNIQUE,
-    adresse TEXT,
-    version BIGINT DEFAULT 0,
-    created_at TIMESTAMP,
-    updated_at TIMESTAMP
-);
-
--- Table de jointure user_roles
-CREATE TABLE IF NOT EXISTS user_roles (
-    user_id BIGINT NOT NULL,
-    role_id BIGINT NOT NULL REFERENCES roles(id),
-    PRIMARY KEY (user_id, role_id)
-);
-
--- Données initiales
-INSERT INTO roles (name) VALUES ('ROLE_USER') ON CONFLICT DO NOTHING;
-INSERT INTO roles (name) VALUES ('ROLE_ADMIN') ON CONFLICT DO NOTHING;
-INSERT INTO roles (name) VALUES ('ROLE_AGENCE') ON CONFLICT DO NOTHING;
-INSERT INTO roles (name) VALUES ('ROLE_ENTREPRISE') ON CONFLICT DO NOTHING;
-```
-
-> **Vérification Flyway** : Dans les logs au démarrage, chercher :
-> ```
-> Successfully applied 1 migration to schema "public", now at version v2
-> ```
+### Règles de collaboration inter-modules
+- Ne jamais injecter directement `ParticulierRepository`, `AgenceRepository` ou `EntrepriseRepository` depuis un autre module.
+- Ne jamais modifier les classes du module ING1 sans concertation avec l'équipe ING1.
+- Toujours communiquer via `UserService` — les entités internes ne sont pas une API publique.
 
 ---
 
-## 13. Tests
-
-Fichier : `src/test/java/com/securetransfer/platform/user/UserServiceTest.java`
-
-### Résultats des tests ✅
-
-```
-✅ createParticulier — création réussie → retourne UserResponse    (1 sec 502 ms)
-✅ validateTransactionLimit — montant > limite → BusinessException  (11 ms)
-✅ createParticulier — email déjà existant → BusinessException      (6 ms)
-
-BUILD SUCCESS — 3 tests passés
-```
-
-### Lancer les tests
-
-```bash
-# Dans IntelliJ : clic droit sur UserServiceTest.java → Run
-# Ou en ligne de commande :
-mvn test -Dtest=UserServiceTest
-```
-
----
-
-## 14. Validation des endpoints
-
-### Étape 1 — Démarrer le serveur
-
-Lancer `PlatformApplication` dans IntelliJ. Attendre :
-```
-Tomcat started on port 8080 (http)
-Started PlatformApplication in X seconds
-```
-
-### Étape 2 — Créer un particulier (endpoint public)
-
-```powershell
-Invoke-RestMethod `
-  -Uri "http://localhost:8080/api/users/particuliers" `
-  -Method POST `
-  -ContentType "application/json" `
-  -Body '{"email":"ahmed@test.com","password":"motdepasse123","phoneNumber":"+212612345678","cin":"AB123456","dateOfBirth":"1995-03-15","nationality":"Marocain"}'
-```
-
-**Réponse attendue (HTTP 201) :**
-```
-id                     : 1
-email                  : ahmed@test.com
-kycStatus              : PENDING
-dailyTransactionLimit  : 10000
-singleTransactionLimit : 2000
-createdAt              : 2026-05-17T00:33:38.659982
-```
-
-### Étape 3 — Créer un compte auth (ING1) et obtenir un token
-
-```powershell
-# Register dans le système auth ING1
-Invoke-RestMethod `
-  -Uri "http://localhost:8080/api/v1/auth/register" `
-  -Method POST `
-  -ContentType "application/json" `
-  -Body '{"email":"ahmed@test.com","password":"motdepasse123"}'
-
-# Login → obtenir le token JWT
-$response = Invoke-RestMethod `
-  -Uri "http://localhost:8080/api/v1/auth/login" `
-  -Method POST `
-  -ContentType "application/json" `
-  -Body '{"email":"ahmed@test.com","password":"motdepasse123"}'
-
-$token = $response.token
-Write-Host "Token:" $token
-```
-
-**Réponse attendue :**
-```
-Token: eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJhaG1lZEB0...
-```
-
-### Étape 4 — GET /api/users/me (endpoint protégé)
-
-```powershell
-Invoke-RestMethod `
-  -Uri "http://localhost:8080/api/users/me" `
-  -Method GET `
-  -Headers @{Authorization="Bearer $token"}
-```
-
-**Réponse attendue (HTTP 200) :**
-```
-id                     : 1
-email                  : ahmed@test.com
-kycStatus              : PENDING
-dailyTransactionLimit  : 10000.00
-singleTransactionLimit : 2000.00
-createdAt              : 2026-05-17T00:33:38.659982
-```
-
-### Étape 5 — GET /api/users/{id}
-
-```powershell
-Invoke-RestMethod `
-  -Uri "http://localhost:8080/api/users/1" `
-  -Method GET `
-  -Headers @{Authorization="Bearer $token"}
-```
-
----
-
-## 15. Ce que vous exposez aux autres modules
-
-### Pour ING3 — Transferts
-
-```java
-// Injecter UserService dans votre service ING3
-@Autowired
-private UserService userService;
-
-// Vérifier la limite avant d'effectuer un transfert
-userService.validateTransactionLimit(userId, montant);
-// Lance BusinessException si montant > singleTransactionLimit
-```
-
-### Pour ING4 — KYC
-
-```java
-// Après validation KYC, mettre à jour le statut
-userService.updateKycStatus(userId, KycStatus.VERIFIED);
-// ou
-userService.updateKycStatus(userId, KycStatus.REJECTED);
-```
-
-### Pour ING3, ING4, ING6 — Récupérer un profil
-
-```java
-// Par ID
-UserResponse user = userService.getUser(Long id);
-
-// Par email (utile pour récupérer l'utilisateur connecté)
-UserResponse user = userService.getUserByEmail(String email);
-
-// Liste paginée avec filtre KYC
-Page<UserResponse> users = userService.getAllUsers(KycStatus.PENDING, 0, 20);
-```
-
-### UserResponse — Structure retournée
-
-```java
-public record UserResponse(
-    Long id,
-    String email,
-    KycStatus kycStatus,           // PENDING | VERIFIED | REJECTED
-    BigDecimal dailyTransactionLimit,
-    BigDecimal singleTransactionLimit,
-    LocalDateTime createdAt
-) {}
-```
-
-### ⚠️ Règles de collaboration inter-modules
-
-1. **Ne jamais injecter directement** `ParticulierRepository`, `AgenceRepository` ou `EntrepriseRepository` depuis un autre module. Utiliser uniquement `UserService`.
-2. **Ne jamais modifier** les classes du module ING1 sans concertation avec l'équipe ING1.
-3. **Communiquer via l'interface** `UserService` — les autres modules n'ont pas besoin de connaître les entités internes.
-
----
-
-## 16. Erreurs connues et solutions
+## 14. Erreurs connues et solutions
 
 | Erreur | Cause | Solution |
 |--------|-------|----------|
-| `Could not resolve placeholder 'encryption.key'` | `encryption:` mal indenté dans `application.yml` | Mettre `encryption:` au niveau racine, pas sous `jwt:` |
+| `Could not resolve placeholder 'encryption.key'` | `encryption:` mal indenté dans `application.yml` | Placer `encryption:` au niveau racine, pas sous `jwt:` |
 | `package org.mapstruct does not exist` | MapStruct processor absent du `pom.xml` | Ajouter `mapstruct-processor` dans `<annotationProcessorPaths>` |
-| `HTTP 403` sur `/api/v1/auth/login` | L'email n'existe pas dans `user_credentials` | Faire d'abord `/api/v1/auth/register` |
-| `HTTP 403` sur `/api/users/me` | L'email JWT n'existe pas dans `particuliers` | Utiliser le même email pour register ING1 ET créer particulier ING2 |
-| `HTTP 403` sur `/api/v1/auth/register` | Email déjà utilisé → exception → Spring Security intercepte | Utiliser un email différent |
-| `cannot find symbol method createAgence` | Méthode absente dans `UserService` | Ajouter `createAgence()` et `createEntreprise()` |
-| `Build failed: Annotation Processing` | IntelliJ ne traite pas les annotations | File → Settings → Compiler → Annotation Processors → Enable |
+| `HTTP 403` sur `/api/v1/auth/login` | L'email n'existe pas dans `user_credentials` | Appeler d'abord `/api/v1/auth/register` |
+| `HTTP 403` sur `/api/users/me` | L'email du token JWT n'existe pas dans les tables utilisateurs ING2 | Utiliser le même email pour le register ING1 et la création du profil ING2 |
+| `HTTP 403` sur `/api/v1/auth/register` | Email déjà utilisé → exception interceptée par Spring Security | Utiliser un email différent |
+| `cannot find symbol method createAgence` | Méthode absente dans `UserService` | Implémenter `createAgence()` et `createEntreprise()` dans le service |
+| `Build failed: Annotation Processing` | IntelliJ ne traite pas les annotations MapStruct | Activer via File → Settings → Compiler → Annotation Processors |
 
 ---
-
 ## ✅ Checklist de validation complète
 
-### Jour 1
 - [ ] Docker : `docker ps` → 2 conteneurs Up (postgres + redis)
 - [ ] `pom.xml` : MapStruct ajouté + processor configuré
 - [ ] `PlatformApplication.java` : `@EnableJpaAuditing` présent
@@ -981,22 +326,19 @@ public record UserResponse(
 - [ ] `EncryptedStringConverter.java` créé
 - [ ] `V2__users.sql` créé → logs Flyway : "2 migrations applied"
 - [ ] `application.yml` : `encryption.key` ajouté au niveau racine
-
-### Jour 2
 - [ ] `RoleRepository`, `ParticulierRepository`, `AgenceRepository`, `EntrepriseRepository` créés
 - [ ] DTOs créés : `CreateParticulierRequest`, `CreateAgenceRequest`, `CreateEntrepriseRequest`, `UpdateUserRequest`, `UserResponse`
 - [ ] `UserMapper.java` créé → Rebuild → `target/generated-sources/` contient `UserMapperImpl`
 - [ ] `UserService.java` créé avec toutes les méthodes
-
-### Jour 3
 - [ ] `UserController.java` créé avec tous les endpoints
 - [ ] `SecurityConfig.java` modifié : `/api/users/particuliers` en public
 - [ ] Tests : `mvn test` → 3 tests verts ✅
 - [ ] `POST /api/users/particuliers` → HTTP 201 ✅
 - [ ] `GET /api/users/me` avec token JWT → HTTP 200 ✅
 - [ ] `git push origin feature/ing2-users` ✅
+- [ ] 
+<img width="1004" height="314" alt="image" src="https://github.com/user-attachments/assets/0a100209-d9a4-449c-baf1-c6d2de07a11c" />
 
----
+<img width="1004" height="443" alt="image" src="https://github.com/user-attachments/assets/875b8782-4e5c-48e9-a294-f9cbf03a1b41" />
+<img width="1004" height="296" alt="image" src="https://github.com/user-attachments/assets/624c415d-45d0-48fa-8d95-8cfc8271f074" />
 
-*README généré pour le module ING2 — SecureTransfer Platform*
-*Dernière mise à jour : Mai 2026*
