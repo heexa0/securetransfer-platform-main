@@ -1,18 +1,18 @@
-# 📦 Module ING2 — Gestion des Utilisateurs (Users)
+#  Module ING2 — Gestion des Utilisateurs (Users)
 **Projet SecureTransfer — Branche : `feature/ing2-users`**
 
 > Ce module gère la création, l'authentification et la gestion des profils utilisateurs (Particuliers, Agences, Entreprises). Il s'appuie sur le module ING1 (Auth/JWT) et expose ses services aux modules ING3, ING4 et ING6.
 
 ---
 
-## 👤 Auteur
+## Auteur
 - **Module** : ING2 — User Management
 - **Dépend de** : ING1 (Auth, JWT, SecurityConfig)
 - **Expose vers** : ING3 (Transferts), ING4 (KYC), ING6 (Notifications)
 
 ---
 
-## 📋 Table des matières
+##  Table des matières
 
 1. [Architecture du module](#1-architecture-du-module)
 2. [Prérequis et installation](#2-prérequis-et-installation)
