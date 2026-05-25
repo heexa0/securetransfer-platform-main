@@ -41,7 +41,6 @@ public class SecurityConfig {
                                 "/api/v1/auth/register",
                                 "/api/v1/auth/login",
                                 "/api/v1/auth/mfa/**",
-                                "/api/users/particuliers",  // ← inscription particulier est publique
                                 "/swagger-ui/**",
                                 "/v3/api-docs/**"
                         ).permitAll()  // Ces endpoints sont accessibles sans JWT
