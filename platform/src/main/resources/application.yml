@@ -43,6 +43,7 @@ jwt:
 encryption:
   key: vXyN77VOGSdIQJO1FJ5bJLtruNMM31K40et+F2hVd74=
 
+<<<<<<< HEAD
 # --- ADD TO EXISTING application.yml ---
 
   servlet:
@@ -52,3 +53,5 @@ encryption:
 
 kyc:
   storage-dir: kyc-documents  # stored outside webroot
+=======
+>>>>>>> 3ba8522ccea825626175d2122bcfce25d088fc90
