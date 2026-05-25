@@ -38,4 +38,24 @@ logging:
 jwt:
   secret: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970
   expiration: 900000
+<<<<<<< HEAD
   refresh-expiration: 604800000
+=======
+  refresh-expiration: 604800000
+
+encryption:
+  key: vXyN77VOGSdIQJO1FJ5bJLtruNMM31K40et+F2hVd74=
+
+<<<<<<< HEAD
+# --- ADD TO EXISTING application.yml ---
+
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 10MB
+
+kyc:
+  storage-dir: kyc-documents  # stored outside webroot
+=======
+>>>>>>> 3ba8522ccea825626175d2122bcfce25d088fc90
+>>>>>>> a6875774b04b55f77bd8b34bf0e399ff2df12633
